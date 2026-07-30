@@ -36,6 +36,11 @@ TRUSTFLOW_CONTRACT_ID=your_contract_id
 JWT_SECRET=your_secure_secret_here
 PORT=3001
 DISCORD_WEBHOOK_URL=your_discord_webhook_url  # Optional
+PINATA_JWT=your_pinata_jwt  # Optional — unconfigured providers use an in-memory simulated store
+WEB3_STORAGE_TOKEN=your_web3_storage_token  # Optional
+INFURA_IPFS_PROJECT_ID=your_infura_project_id  # Optional
+INFURA_IPFS_PROJECT_SECRET=your_infura_project_secret  # Optional
+IPFS_REPIN_INTERVAL_MS=300000  # Optional — re-pin worker sweep interval, set to 0 to disable
 ```
 
 ### 3. Verify Installation

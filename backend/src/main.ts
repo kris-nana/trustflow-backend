@@ -84,6 +84,11 @@ async function bootstrap() {
     .addTag('Escrow', 'Escrow vault management and dispute resolution')
     .addTag('Webhooks', 'Webhook registration and management')
     .addTag('Monitoring', 'Health checks and metrics')
+    .addTag(
+      'IPFS Pinning',
+      'Multi-provider IPFS pinning with content-hash verification, automatic failover, and a ' +
+        'background re-pin worker that restores replication when a provider silently drops a pin.',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

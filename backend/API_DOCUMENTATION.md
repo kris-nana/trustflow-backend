@@ -34,6 +34,7 @@ The TrustFlow Backend API provides off-chain services for the TrustFlow gig econ
 - **Dispute Resolution**: Raise disputes and trigger juror notifications
 - **Webhooks**: Register endpoints to receive event notifications
 - **Monitoring**: Health checks and Prometheus metrics
+- **IPFS Pinning**: Pin deliverables across multiple IPFS providers with content-hash verification, automatic failover, and a background re-pin worker for durability
 
 ---
 
@@ -136,6 +137,16 @@ RATE_LIMIT_LOCKOUT_SECONDS=900
 | GET    | `/health`  | Health check       |
 | GET    | `/metrics` | Prometheus metrics |
 
+### IPFS Pinning
+
+| Method | Endpoint             | Description                                                |
+| ------ | -------------------- | ------------------------------------------------------------ |
+| POST   | `/ipfs/pins`         | Pin content across multiple providers with content-hash verification |
+| GET    | `/ipfs/pins`         | List all pin records                                        |
+| GET    | `/ipfs/pins/:cid`    | Get a pin record by CID                                     |
+| POST   | `/ipfs/pins/:cid/verify` | Re-verify durability and top up replication if degraded |
+| DELETE | `/ipfs/pins/:cid`    | Unpin from every provider currently holding the content      |
+
 ---
 
 ## 💡 Common Use Cases
@@ -211,6 +222,42 @@ curl -X POST http://localhost:3001/webhooks \
 }
 ```
 
+### 4. Pin a Deliverable to IPFS
+
+```bash
+curl -X POST http://localhost:3001/ipfs/pins \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -d '{
+    "content": "SGVsbG8sIFRydXN0RmxvdyE=",
+    "filename": "milestone-1-receipt.json",
+    "replicationFactor": 2
+  }'
+```
+
+**Response**:
+
+```json
+{
+  "cid": "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+  "size": 20,
+  "filename": "milestone-1-receipt.json",
+  "replicationFactor": 2,
+  "status": "HEALTHY",
+  "providers": [
+    { "provider": "pinata", "status": "PINNED", "attempts": 1, "pinnedAt": "..." },
+    { "provider": "web3.storage", "status": "PINNED", "attempts": 1, "pinnedAt": "..." }
+  ],
+  "createdAt": "...",
+  "updatedAt": "..."
+}
+```
+
+The `cid` is derived purely from the submitted bytes (CIDv1, raw, sha2-256), so any provider that
+ends up storing different bytes fails content-hash verification and is automatically failed over.
+If a provider later loses the pin, `POST /ipfs/pins/:cid/verify` (also run automatically by the
+background re-pin worker) detects it and restores replication via a spare provider.
+
 ---
 
 ## 📦 Webhook Events
@@ -225,6 +272,12 @@ When you register a webhook, you'll receive POST requests for these events:
 | `escrow.released`  | Funds released     | Escrow details     |
 | `dispute.raised`   | Dispute initiated  | Dispute details    |
 | `dispute.resolved` | Dispute resolved   | Resolution details |
+| `ipfs.pin.created`  | Content newly pinned                          | CID, replication factor, pinned providers |
+| `ipfs.pin.degraded` | Pin dropped below its replication factor      | CID                                        |
+| `ipfs.pin.restored` | Replication restored after a loss             | CID, healthy provider count                |
+| `ipfs.pin.lost`      | A provider no longer holds a previously-pinned CID | CID, provider                        |
+| `ipfs.pin.failed`   | Every registered provider failed to pin a CID | CID                                        |
+| `ipfs.pin.removed`  | Content unpinned from all providers           | CID                                        |
 
 ### Webhook Payload Format
 
@@ -285,6 +338,14 @@ STELLAR_NETWORK=TESTNET
 STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/... (optional)
+
+# IPFS pinning providers (all optional — unconfigured providers run in an
+# in-memory simulated mode so pinning/failover work out of the box in dev/CI)
+PINATA_JWT=
+WEB3_STORAGE_TOKEN=
+INFURA_IPFS_PROJECT_ID=
+INFURA_IPFS_PROJECT_SECRET=
+IPFS_REPIN_INTERVAL_MS=300000
 ```
 
 ---
