@@ -73,7 +73,10 @@ export class AuditService implements OnModuleInit {
       return;
     }
     try {
-      await this.db.query(
+      // Use an independent connection pool that bypasses the ambient transaction
+      // so audit logs persist even if the caller's business logic rolls back.
+      const pool = this.db.getPool();
+      await pool.query(
         `INSERT INTO audit_logs (operation, "user", entity_id, entity_type, before_state, after_state, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [

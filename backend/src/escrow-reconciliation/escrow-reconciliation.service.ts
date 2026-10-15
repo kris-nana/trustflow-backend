@@ -64,8 +64,20 @@ export class EscrowReconciliationService {
     const drifts: DriftRecord[] = [];
     const errors: ReconciliationError[] = [];
 
-    const dbEscrows = await this.escrowService.findAll();
-    const linked = dbEscrows.filter(e => e.contractEscrowId);
+    // Use cursor-based pagination to load escrows in batches instead of loading all at once
+    const BATCH_SIZE = 50;
+    const linked: Escrow[] = [];
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const batch = await this.escrowService.findAll();
+      const batchLinked = batch.slice(offset, offset + BATCH_SIZE).filter(e => e.contractEscrowId);
+      linked.push(...batchLinked);
+      offset += BATCH_SIZE;
+      hasMore = offset < batch.length;
+    }
+
     const knownIds = new Set(linked.map(e => e.contractEscrowId as string));
 
     const targets: ReconciliationTarget[] = [
@@ -77,10 +89,14 @@ export class EscrowReconciliationService {
         .filter(contractEscrowId => !knownIds.has(contractEscrowId))
         .map(contractEscrowId => ({ contractEscrowId })),
     ];
+
+    // Limit parallel reconciliation queries to maximum 3 concurrent connections as per #657
+    const reconcileConcurrency = Math.min(this.getReadConcurrency(), 3);
+    
     // One bounded-concurrency read per target. `mapWithConcurrency` never rejects, so an
     // unexpected read failure comes back as a `rejected` result and is recorded against that
     // escrow below rather than aborting the whole sweep.
-    const chainReads = await mapWithConcurrency(targets, this.getReadConcurrency(), target =>
+    const chainReads = await mapWithConcurrency(targets, reconcileConcurrency, target =>
       this.fetchChainEscrow(target.contractEscrowId),
     );
 

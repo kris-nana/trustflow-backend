@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -36,6 +37,10 @@ export class DeliverableService {
   async upload(dto: UploadDeliverableDto, requester: string): Promise<Deliverable> {
     await this.assertMayDeliver(dto, requester);
 
+    // Decode base64 content to verify file magic bytes
+    const buffer = Buffer.from(dto.content, 'base64');
+    await this.validateFileMagicBytes(buffer, dto.filename);
+
     const id = `del-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
 
@@ -71,6 +76,42 @@ export class DeliverableService {
 
     this.deliverables.set(id, deliverable);
     return deliverable;
+  }
+
+  /**
+   * Validates file content by inspecting magic bytes to prevent malicious files
+   * disguised with incorrect Content-Type headers. Rejects files that don't match
+   * the whitelist or have mismatched MIME types.
+   */
+  private async validateFileMagicBytes(buffer: Buffer, filename: string): Promise<void> {
+    const { fileTypeFromBuffer } = await import('file-type');
+    const detected = await fileTypeFromBuffer(buffer);
+
+    // Whitelist of allowed MIME types
+    const allowedMimeTypes = [
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/jpg',
+      'application/zip',
+      'application/x-zip-compressed',
+    ];
+
+    if (!detected) {
+      throw new BadRequestException(
+        'Unable to determine file type from content. Only PDF, PNG, JPEG, and ZIP files are allowed.',
+      );
+    }
+
+    if (!allowedMimeTypes.includes(detected.mime)) {
+      throw new BadRequestException(
+        `File type ${detected.mime} is not allowed. Only PDF, PNG, JPEG, and ZIP files are allowed.`,
+      );
+    }
+
+    this.logger.log(
+      `File validation passed: ${filename} detected as ${detected.mime} (${detected.ext})`,
+    );
   }
 
   /**

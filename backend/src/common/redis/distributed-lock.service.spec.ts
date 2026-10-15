@@ -21,8 +21,26 @@ class FakeRedis {
     return 'OK';
   }
 
-  async eval(_script: string, _numKeys: number, key: string, token: string): Promise<number> {
+  async eval(
+    script: string,
+    numKeys: number,
+    key: string,
+    token: string,
+    ttlMs?: number,
+  ): Promise<number> {
+    void numKeys;
     const existing = this.store.get(key);
+    
+    // RENEW_LUA script: check token and renew expiry
+    if (script.includes('PEXPIRE')) {
+      if (existing && existing.value === token && existing.expiresAt > Date.now()) {
+        this.store.set(key, { value: token, expiresAt: Date.now() + (ttlMs || 0) });
+        return 1;
+      }
+      return 0;
+    }
+    
+    // RELEASE_LUA script: check token and delete
     if (existing && existing.value === token) {
       this.store.delete(key);
       return 1;
@@ -79,5 +97,56 @@ describe('DistributedLockService', () => {
     const token = await service.tryAcquire('lock:sweep', 5000);
     expect(token).not.toBeNull();
     await expect(service.release('lock:sweep', token as string)).resolves.toBeUndefined();
+  });
+
+  describe('renewIfOwned', () => {
+    it('renews the lock when the caller still holds the token', async () => {
+      const redis = new FakeRedis();
+      const service = new DistributedLockService(redis as any);
+
+      const token = await service.tryAcquire('lock:sweep', 5000);
+      expect(token).not.toBeNull();
+
+      const renewed = await service.renewIfOwned('lock:sweep', token as string, 10000);
+      expect(renewed).toBe(true);
+    });
+
+    it('returns false when the key is held by a different token', async () => {
+      const redis = new FakeRedis();
+      const holder = new DistributedLockService(redis as any);
+      const impostor = new DistributedLockService(redis as any);
+
+      const token = await holder.tryAcquire('lock:sweep', 5000);
+      expect(token).not.toBeNull();
+
+      const renewed = await impostor.renewIfOwned('lock:sweep', 'wrong-token', 10000);
+      expect(renewed).toBe(false);
+    });
+
+    it('returns false when the key has expired or does not exist', async () => {
+      const redis = new FakeRedis();
+      const service = new DistributedLockService(redis as any);
+
+      const renewed = await service.renewIfOwned('lock:nonexistent', 'some-token', 10000);
+      expect(renewed).toBe(false);
+    });
+
+    it('returns true unconditionally when Redis is unavailable (no-Redis branch)', async () => {
+      const service = new DistributedLockService(null);
+
+      const renewed = await service.renewIfOwned('lock:sweep', 'any-token', 5000);
+      expect(renewed).toBe(true);
+    });
+
+    it('throws when Redis eval fails (error path)', async () => {
+      const redis = {
+        eval: jest.fn().mockRejectedValue(new Error('Redis connection lost')),
+      };
+      const service = new DistributedLockService(redis as any);
+
+      await expect(service.renewIfOwned('lock:sweep', 'token', 5000)).rejects.toThrow(
+        'Failed to renew lock "lock:sweep": Redis connection lost',
+      );
+    });
   });
 });
